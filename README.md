@@ -121,7 +121,7 @@
 
 ```bash
 git clone https://github.com/ERROR0101r/fahad-
-cd fahad
+cd fahad-
 bash setup.sh
 ```
 
@@ -250,8 +250,8 @@ COMMANDS LIST
 Installation Commands
 
 ```bash
-git clone https://github.com/ERROR0101r/fahad.git
-cd fahad
+git clone https://github.com/ERROR0101r/fahad-
+cd fahad-
 bash setup.sh
 ```
 
@@ -311,8 +311,8 @@ pkg update && pkg upgrade -y
 pkg install git -y
 
 # Step 4: Clone FAHAD
-git clone https://github.com/ERROR0101r/fahad.git
-cd fahad
+git clone https://github.com/ERROR0101r/fahad-
+cd fahad-
 
 # Step 5: Run installer
 bash setup.sh
