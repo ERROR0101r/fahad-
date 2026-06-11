@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-FAHAD - Fast Automated Hosting And Deployment
-Deploy any HTML/PHP project to Tor network instantly
-"""
-
 import os
 import subprocess
 import sys
@@ -59,6 +53,14 @@ class FAHAD:
         color = colors.get(status, Colors.WHITE)
         print(f"{color}[{status}]{Colors.RESET} {msg}")
     
+    def check_command(self, cmd):
+        """Check if a command exists"""
+        try:
+            subprocess.run([cmd, "--version"], capture_output=True, check=False)
+            return True
+        except FileNotFoundError:
+            return False
+    
     def detect_project_type(self):
         """Auto-detect if project is HTML or PHP"""
         index_html = os.path.join(self.project_path, "index.html")
@@ -81,17 +83,27 @@ class FAHAD:
         self.print_status("Checking dependencies...", "INFO")
         
         # Check if Tor is installed
-        result = subprocess.run(["which", "tor"], capture_output=True, text=True)
-        if result.returncode != 0:
+        if not self.check_command("tor"):
             self.print_status("Installing Tor...", "INFO")
             subprocess.run(["pkg", "install", "tor", "-y"], capture_output=True)
+        else:
+            self.print_status("Tor already installed", "SUCCESS")
         
         # Install PHP if needed
         if self.project_type == "php":
-            result = subprocess.run(["which", "php"], capture_output=True, text=True)
-            if result.returncode != 0:
+            if not self.check_command("php"):
                 self.print_status("Installing PHP...", "INFO")
                 subprocess.run(["pkg", "install", "php", "-y"], capture_output=True)
+            else:
+                self.print_status("PHP already installed", "SUCCESS")
+        
+        # Install Python if needed for HTML server
+        if self.project_type == "html":
+            if not self.check_command("python"):
+                self.print_status("Installing Python...", "INFO")
+                subprocess.run(["pkg", "install", "python", "-y"], capture_output=True)
+            else:
+                self.print_status("Python already installed", "SUCCESS")
         
         self.print_status("Dependencies ready", "SUCCESS")
     
@@ -101,20 +113,25 @@ class FAHAD:
         
         # Stop any existing Tor
         subprocess.run(["pkill", "tor"], capture_output=True)
-        time.sleep(1)
+        time.sleep(2)
         
-        # Remove old config
-        subprocess.run(["rm", "-rf", "$PREFIX/etc/tor"], shell=True, capture_output=True)
-        subprocess.run(["mkdir", "-p", "$PREFIX/etc/tor"], shell=True, capture_output=True)
-        subprocess.run(["rm", "-rf", "~/.tor"], shell=True, capture_output=True)
+        # Create directories
+        os.makedirs("/data/data/com.termux/files/usr/etc/tor", exist_ok=True)
+        os.makedirs("/data/data/com.termux/files/home/.tor", exist_ok=True)
+        
+        # Remove old hidden service directory
+        import shutil
+        shutil.rmtree("/data/data/com.termux/files/home/.tor/hidden_service", ignore_errors=True)
         
         # Create new torrc
+        torrc_path = "/data/data/com.termux/files/usr/etc/tor/torrc"
         torrc_content = f"""## FAHAD - Auto-generated Tor config
 HiddenServiceDir /data/data/com.termux/files/home/.tor/hidden_service
 HiddenServicePort 80 127.0.0.1:{self.port}
+Log notice file /data/data/com.termux/files/home/.tor/tor.log
 """
         
-        with open("/data/data/com.termux/files/usr/etc/tor/torrc", "w") as f:
+        with open(torrc_path, "w") as f:
             f.write(torrc_content)
         
         self.print_status("Tor configured", "SUCCESS")
@@ -134,8 +151,15 @@ HiddenServicePort 80 127.0.0.1:{self.port}
             cmd = ["python", "-m", "http.server", str(self.port)]
             self.server_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
-        time.sleep(2)
-        self.print_status(f"Server started on port {self.port}", "SUCCESS")
+        time.sleep(3)
+        
+        # Verify server is running
+        if self.server_process.poll() is None:
+            self.print_status(f"Server started on port {self.port}", "SUCCESS")
+        else:
+            self.print_status(f"Failed to start server on port {self.port}", "ERROR")
+            return False
+        return True
     
     def start_tor(self):
         """Start Tor service"""
@@ -146,18 +170,30 @@ HiddenServicePort 80 127.0.0.1:{self.port}
         self.tor_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
         # Wait for Tor to bootstrap
-        self.print_status("Waiting for Tor to bootstrap (30 seconds)...", "INFO")
-        time.sleep(30)
+        self.print_status("Waiting for Tor to bootstrap (35 seconds)...", "INFO")
+        
+        # Show progress
+        for i in range(35):
+            time.sleep(1)
+            if i % 5 == 0 and i > 0:
+                print(f"   ... still bootstrapping ({i}s)")
         
         # Get onion address
         hostname_file = "/data/data/com.termux/files/home/.tor/hidden_service/hostname"
-        if os.path.exists(hostname_file):
-            with open(hostname_file, "r") as f:
-                self.onion_address = f.read().strip()
-            self.print_status(f"🌐 Hidden Service Created!", "SUCCESS")
-        else:
-            self.print_status("Failed to get onion address", "ERROR")
-            self.onion_address = "ERROR - Check Tor logs"
+        
+        # Try multiple times to get hostname
+        for attempt in range(5):
+            if os.path.exists(hostname_file):
+                with open(hostname_file, "r") as f:
+                    self.onion_address = f.read().strip()
+                if self.onion_address:
+                    self.print_status(f"🌐 Hidden Service Created!", "SUCCESS")
+                    return True
+            time.sleep(2)
+        
+        self.print_status("Failed to get onion address", "ERROR")
+        self.onion_address = "ERROR - Check Tor logs"
+        return False
     
     def show_success(self):
         """Display success message with onion address"""
@@ -179,18 +215,22 @@ HiddenServicePort 80 127.0.0.1:{self.port}
         print("\n" + "="*60)
         self.print_status("Shutting down FAHAD...", "WARNING")
         
-        if self.server_process:
+        if self.server_process and self.server_process.poll() is None:
             self.print_status("Stopping web server...", "INFO")
             self.server_process.terminate()
-            time.sleep(1)
-            self.server_process.kill()
+            time.sleep(2)
+            if self.server_process.poll() is None:
+                self.server_process.kill()
         
-        if self.tor_process:
+        if self.tor_process and self.tor_process.poll() is None:
             self.print_status("Stopping Tor service...", "INFO")
             self.tor_process.terminate()
-            time.sleep(1)
-            self.tor_process.kill()
-            subprocess.run(["pkill", "tor"], capture_output=True)
+            time.sleep(2)
+            if self.tor_process.poll() is None:
+                self.tor_process.kill()
+        
+        # Kill any remaining tor processes
+        subprocess.run(["pkill", "tor"], capture_output=True)
         
         self.print_status("All services stopped. Goodbye!", "SUCCESS")
         print("="*60 + "\n")
@@ -230,8 +270,10 @@ HiddenServicePort 80 127.0.0.1:{self.port}
         # Setup and deploy
         self.install_dependencies()
         self.configure_tor()
-        self.start_server()
-        self.start_tor()
+        if not self.start_server():
+            sys.exit(1)
+        if not self.start_tor():
+            sys.exit(1)
         self.show_success()
         
         # Register cleanup on exit
