@@ -120,7 +120,7 @@
 **One Command Setup:**
 
 ```bash
-git clone https://github.com/ERROR0101r/fahad.git
+git clone https://github.com/ERROR0101r/fahad-
 cd fahad
 bash setup.sh
 ```
